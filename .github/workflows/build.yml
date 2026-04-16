@@ -14,10 +14,10 @@ jobs:
 
     steps:
     - name: Checkout Code
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
     - name: Set up Python
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: '3.10'
 
@@ -28,7 +28,9 @@ jobs:
     - name: Build with PyInstaller (Windows)
       if: matrix.os == 'windows-latest'
       run: |
-        pyinstaller --noconsole --onefile --add-data "C:\hostedtoolcache\windows\Python\3.10.11\x64\Lib\site-packages\customtkinter;customtkinter" --name "T-Drive-Windows" main.py
+        # Use Python to find the exact path of customtkinter dynamically
+        python -c "import customtkinter; import os; print(f'CUSTOM_PATH={os.path.dirname(customtkinter.__file__)}')" >> $GITHUB_ENV
+        pyinstaller --noconsole --onefile --add-data "${{ env.CUSTOM_PATH }};customtkinter" --name "T-Drive-Windows" main.py
 
     - name: Build with PyInstaller (macOS)
       if: matrix.os == 'macos-latest'
@@ -36,7 +38,7 @@ jobs:
         pyinstaller --noconsole --onefile --add-data "$(python -c 'import customtkinter; print(customtkinter.__path__[0])'):customtkinter" --name "T-Drive-Mac" main.py
 
     - name: Upload Artifacts
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: T-Drive-${{ matrix.os }}
         path: dist/
