@@ -25,11 +25,14 @@ jobs:
       run: |
         pip install pyinstaller customtkinter pillow telethon pystray plyer
 
+    - name: Find CustomTkinter Path (Windows)
+      if: matrix.os == 'windows-latest'
+      run: |
+        echo "CUSTOM_PATH=$(python -c 'import customtkinter; import os; print(os.path.dirname(customtkinter.__file__))')" >> $GITHUB_ENV
+
     - name: Build with PyInstaller (Windows)
       if: matrix.os == 'windows-latest'
       run: |
-        # Use Python to find the exact path of customtkinter dynamically
-        python -c "import customtkinter; import os; print(f'CUSTOM_PATH={os.path.dirname(customtkinter.__file__)}')" >> $GITHUB_ENV
         pyinstaller --noconsole --onefile --add-data "${{ env.CUSTOM_PATH }};customtkinter" --name "T-Drive-Windows" main.py
 
     - name: Build with PyInstaller (macOS)
