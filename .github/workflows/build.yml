@@ -47,3 +47,31 @@ jobs:
       with:
         name: T-Drive-${{ matrix.os }}
         path: dist/
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Windows Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: T-Drive-windows-latest
+          path: windows
+
+      - name: Download Mac Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: T-Drive-macos-latest
+          path: mac
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            windows/T-Drive-Windows.exe
+            mac/T-Drive-Mac
+          name: T-Drive v${{ github.ref_name }}
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
