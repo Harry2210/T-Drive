@@ -1,0 +1,17 @@
+# T-Drive Sensitive Files
+config.json
+telegram_drive_session.session
+telegram_drive_session.session-journal
+log.txt
+sync_db.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.env
+
+# Windows Icons Cache
+.td_icons/
+AppData/

@@ -1,0 +1,42 @@
+name: Build T-Drive
+
+on:
+  push:
+    tags:
+      - 'v*' # Push a tag like v1.0.2 to trigger the build
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+
+    - name: Install Dependencies
+      run: |
+        pip install pyinstaller customtkinter pillow telethon pystray plyer
+
+    - name: Build with PyInstaller (Windows)
+      if: matrix.os == 'windows-latest'
+      run: |
+        pyinstaller --noconsole --onefile --add-data "C:\hostedtoolcache\windows\Python\3.10.11\x64\Lib\site-packages\customtkinter;customtkinter" --name "T-Drive-Windows" main.py
+
+    - name: Build with PyInstaller (macOS)
+      if: matrix.os == 'macos-latest'
+      run: |
+        pyinstaller --noconsole --onefile --add-data "$(python -c 'import customtkinter; print(customtkinter.__path__[0])'):customtkinter" --name "T-Drive-Mac" main.py
+
+    - name: Upload Artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: T-Drive-${{ matrix.os }}
+        path: dist/
