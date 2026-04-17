@@ -618,20 +618,9 @@ class TelegramDriveApp(ctk.CTk):
         inner = ctk.CTkFrame(card, fg_color="transparent")
         inner.pack(fill="x", padx=32, pady=28)
 
-        # ── Hash algorithm ──
-        ctk.CTkLabel(
-            inner, text="Hash Algorithm",
-            font=ctk.CTkFont(size=13, weight="bold"),
-        ).pack(anchor="w", pady=(0, 6))
-        self._set_hash = ctk.CTkSegmentedButton(inner, values=["md5", "sha256"])
-        self._set_hash.set(
-            self._config.hash_algorithm if self._config else "md5",
-        )
-        self._set_hash.pack(anchor="w", pady=(0, 18))
-
         # ── Delete sync ──
         self._set_delete = ctk.CTkSwitch(
-            inner, text="  Delete sync — mirror deletions both ways",
+            inner, text="Delete sync (When turned on, files are deleted from cloud when deleted from PC)",
             font=ctk.CTkFont(size=13),
         )
         if self._config and self._config.delete_sync:
@@ -640,7 +629,7 @@ class TelegramDriveApp(ctk.CTk):
 
         # ── On-Demand Sync ──
         self._set_on_demand = ctk.CTkSwitch(
-            inner, text="  On-Demand Sync (Save disk space with Stub files)",
+            inner, text="On-Demand Sync (Saves disk space; files download from cloud only when opened)",
             font=ctk.CTkFont(size=13),
         )
         if self._config and getattr(self._config, "on_demand_sync", False):
@@ -702,7 +691,7 @@ class TelegramDriveApp(ctk.CTk):
             )
             return
 
-        self._config.hash_algorithm = self._set_hash.get()
+        self._config.hash_algorithm = "md5" # Hardcoded for simplicity
         self._config.delete_sync = bool(self._set_delete.get())
         self._config.on_demand_sync = bool(self._set_on_demand.get())
         self._config.max_retries = int(self._set_retries.get() or 5)
