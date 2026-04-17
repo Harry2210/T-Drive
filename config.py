@@ -13,7 +13,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-_CONFIG_PATH = Path(__file__).parent / "config.json"
+if getattr(sys, "frozen", False):
+    # If the app is bundled (PyInstaller), use the directory of the executable
+    _EXE_DIR = Path(sys.executable).parent
+    _CONFIG_PATH = _EXE_DIR / "config.json"
+else:
+    # If running from source, use the directory of this script
+    _CONFIG_PATH = Path(__file__).parent / "config.json"
+
 
 
 class ConfigError(Exception):

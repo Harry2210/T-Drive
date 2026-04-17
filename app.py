@@ -52,7 +52,6 @@ ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("dark-blue")
 
 APP_NAME = "T-Drive"
-VERSION = "2.0.0"
 WINDOW_W, WINDOW_H = 980, 660
 SIDEBAR_W = 190
 
@@ -1227,19 +1226,31 @@ class TelegramDriveApp(ctk.CTk):
         
         def run_check():
             try:
-                # We expect a JSON file like: {"version": "1.1.0", "url": "https://..."}
-                with urllib.request.urlopen(UPDATE_CHECK_URL, timeout=10) as response:
+                # Add a random number to the URL to bypass any internet caching
+                import time
+                import ssl
+                cache_buster = f"?t={int(time.time())}"
+                
+                # Context to avoid SSL certificate errors which sometimes happen on Windows
+                ctx = ssl.create_default_context()
+                ctx.check_hostname = False
+                ctx.verify_mode = ssl.CERT_NONE
+                
+                with urllib.request.urlopen(UPDATE_CHECK_URL + cache_buster, timeout=10, context=ctx) as response:
                     resp_data = response.read().decode()
                     data = json.loads(resp_data)
                     latest_version = data.get("version")
                     download_url = data.get("url", "https://github.com/") 
                     
+                    log = get_logger()
+                    log.info(f"Update Check: Local={VERSION}, Remote={latest_version}")
+                    
                     if latest_version and latest_version > VERSION:
                         # Update found! Force the UI to show the update modal
                         self.after(0, lambda: self._show_update_modal(latest_version, download_url))
             except Exception as e:
-                # Silently ignore failures (e.g. no internet) during the background check
-                pass
+                log = get_logger()
+                log.error(f"Update Check Failed: {e}")
 
         threading.Thread(target=run_check, daemon=True).start()
 
@@ -1264,7 +1275,6 @@ class TelegramDriveApp(ctk.CTk):
             modal, text="🚀", font=ctk.CTkFont(size=60)
         ).pack(pady=(30, 10))
         
-        from utils import CLR_ACCENT, CLR_TEXT_DIM
         ctk.CTkLabel(
             modal, text="A New Version is Available!",
             font=ctk.CTkFont(size=22, weight="bold"),
