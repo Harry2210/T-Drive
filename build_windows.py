@@ -23,6 +23,7 @@ def build():
         "pyinstaller",
         "--noconsole",
         "--onefile",
+        "--icon=app.ico",
         f"--add-data={ctk_path}{os.pathsep}customtkinter",
         "--name=T-Drive",
         "main.py"
@@ -33,7 +34,7 @@ def build():
     
     if result.returncode == 0:
         print("\nSUCCESS! Your app is ready in the 'dist' folder.")
-        print("📁 File: dist/T-Drive.exe")
+        print("File: dist/T-Drive.exe")
     else:
         print("\nFAILED! Build process exited with error.")
         print(result.stdout)

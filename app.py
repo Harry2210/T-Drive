@@ -171,6 +171,10 @@ class TelegramDriveApp(ctk.CTk):
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.configure(fg_color=CLR_BG)
 
+        # ── Window Icon ──
+        if os.path.exists("app.ico"):
+            self.iconbitmap("app.ico")
+
 
         # ── State ──
         self._config: AppConfig | None = None

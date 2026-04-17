@@ -38,12 +38,12 @@ jobs:
       if: matrix.os == 'windows-latest'
       shell: bash
       run: |
-        pyinstaller --noconsole --onefile --add-data "${{ env.CUSTOM_PATH }};customtkinter" --name "T-Drive-Windows" main.py
+        pyinstaller --noconsole --onefile --icon=app.ico --add-data "${{ env.CUSTOM_PATH }};customtkinter" --name "T-Drive-Windows" main.py
 
     - name: Build with PyInstaller (macOS)
       if: matrix.os == 'macos-latest'
       run: |
-        pyinstaller --noconsole --onefile --add-data "$(python -c 'import customtkinter; print(customtkinter.__path__[0])'):customtkinter" --name "T-Drive-Mac" main.py
+        pyinstaller --noconsole --onefile --icon=app.png --add-data "$(python -c 'import customtkinter; print(customtkinter.__path__[0])'):customtkinter" --name "T-Drive-Mac" main.py
 
     - name: Upload Artifacts
       uses: actions/upload-artifact@v4
