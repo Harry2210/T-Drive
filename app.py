@@ -780,13 +780,9 @@ class TelegramDriveApp(ctk.CTk):
             "1️⃣  Launch the app.\n\n"
             "2️⃣  In the Setup page, enter your Telegram API ID and Hash.\n\n"
             "3️⃣  Choose a local sync folder (default: C:/TelegramDrive).\n\n"
-            "4️⃣  (Windows) Set a drive letter, e.g., G.\n\n"
-            "5️⃣  Click ‘Save & Connect’; follow the phone‑number, code, and 2FA dialogs.\n\n"
-            "6️⃣  Once connected, go to Dashboard and press ▶ Start Sync.\n\n"
-            "7️⃣  Files placed in the sync folder will upload to Telegram; messages tagged with #TDrive will download locally.\n\n"
-            "8️⃣  Use Settings to adjust hash algorithm, delete‑sync, retry policy, and appearance mode.\n\n"
-            "9️⃣  The Open Folder button opens the sync directory in Explorer/Finder.\n\n"
-            "🔟  For a portable version without Python, download the pre‑built executable from the releases page."
+            "4️⃣  Once connected, go to Dashboard and press ▶ Start Sync.\n\n"
+            "5️⃣  Use Settings to adjust Delete-Sync and On-Demand policies.\n\n"
+            "6️⃣  The Open Folder button opens the sync directory in Explorer/Finder."
         )
         ctk.CTkLabel(
             inner, text=guide_text,
@@ -794,6 +790,31 @@ class TelegramDriveApp(ctk.CTk):
             wraplength=620,
             justify="left",
         ).pack(anchor="w", pady=0)
+
+        # ── Safety & Abuse Section ──
+        ctk.CTkLabel(
+            page, text="⚠️  Safety & Usage Guidelines",
+            font=ctk.CTkFont(size=20, weight="bold"),
+        ).pack(anchor="w", pady=(24, 12))
+
+        safe_card = ctk.CTkFrame(page, fg_color=CLR_CARD, corner_radius=14, border_width=1, border_color=CLR_DIVIDER)
+        safe_card.pack(fill="x")
+        safe_inner = ctk.CTkFrame(safe_card, fg_color="transparent")
+        safe_inner.pack(fill="x", padx=32, pady=24)
+
+        safety_tips = (
+            "✅  FOR PERSONAL USE: Telegram allows personal storage in 'Saved Messages'. This is the safest way to use T-Drive.\n\n"
+            "⚠️  AVOID ABUSE: Do not upload massive amounts of data (e.g., 500GB+) too quickly. This can trigger temporary API limits.\n\n"
+            "🚫  NO PIRACY SHARING: Do not use your T-Drive messages to share copyrighted movies or songs in public channels. This is the #1 way to get banned.\n\n"
+            "🔒  YOUR KEYS: Your API ID and Hash are private. Never share your config.json file with anyone else."
+        )
+        ctk.CTkLabel(
+            safe_inner, text=safety_tips,
+            font=ctk.CTkFont(size=13),
+            wraplength=600,
+            justify="left",
+            text_color="#f87171" # Soft red for warning
+        ).pack(anchor="w")
 
     # ================================================================
     #  ASYNC BRIDGE  (background event loop in a daemon thread)
