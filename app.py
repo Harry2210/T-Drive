@@ -280,6 +280,13 @@ class TelegramDriveApp(ctk.CTk):
             command=self._open_sync_folder,
         ).pack(fill="x", padx=10, pady=2)
 
+        # ── Branding (Created by Harry) ──
+        ctk.CTkLabel(
+            sb, text="Created by Harry",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color=CLR_ACCENT,
+        ).pack(side="bottom", pady=30)
+
         # ── Spacer ──
         ctk.CTkFrame(sb, fg_color="transparent").pack(fill="both", expand=True)
 
@@ -729,6 +736,7 @@ class TelegramDriveApp(ctk.CTk):
         lines: list[tuple[str, ctk.CTkFont, str | None]] = [
             ("☁️  T-Drive", ctk.CTkFont(size=22, weight="bold"), None),
             (f"Version {VERSION}", ctk.CTkFont(size=13), CLR_TEXT_DIM),
+            ("Created by Harry", ctk.CTkFont(size=14, weight="bold"), CLR_ACCENT),
             ("", ctk.CTkFont(size=6), None),
             (
                 "A lightweight cloud storage powered by Telegram.",
