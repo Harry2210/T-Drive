@@ -25,10 +25,10 @@ IS_WINDOWS = sys.platform == "win32"
 IS_MACOS = sys.platform == "darwin"
 
 # Current Application Version (Increment this when you build a new update)
-VERSION = "1.0.2"
+VERSION = "1.1.2"
 
 # Mandatory Update Check URL (Gist is used so the main repo can stay private)
-UPDATE_CHECK_URL = "https://gist.githubusercontent.com/Harry2210/dda90b344ec8d67846f8eb0717800e7d/raw/5f44aa19c01ead3fd6a59bd8b1460f80bc142cc0/version.json"
+UPDATE_CHECK_URL = "https://gist.githubusercontent.com/Harry2210/dda90b344ec8d67846f8eb0717800e7d/raw/version.json"
 
 # ---------------------------------------------------------------------------
 #  Hashing
