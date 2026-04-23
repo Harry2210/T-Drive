@@ -24,6 +24,8 @@ from telethon.tl.types import (
 
 from logger import get_logger
 from utils import SyncDatabase, file_hash, human_size, safe_write, sanitise_filename
+from logger import get_logger
+from utils import SyncDatabase, file_hash, human_size, safe_write, sanitise_filename
 
 if TYPE_CHECKING:
     from config import AppConfig
@@ -37,10 +39,11 @@ class SyncEngine:
     Telegram Saved Messages.
     """
 
-    def __init__(self, config: AppConfig) -> None:
+    def __init__(self, config: AppConfig, on_large_file: any = None) -> None:
         self.cfg = config
         self.local = Path(config.local_folder)
         self.db = SyncDatabase(config.db_file)
+        self.on_large_file = on_large_file
         self.client: TelegramClient | None = None
         self._first_run = True # Track if this is the first sync after clicking Start
         self._running = False
@@ -56,7 +59,11 @@ class SyncEngine:
             self.cfg.api_id,
             self.cfg.api_hash,
         )
-        await self.client.start()
+        try:
+            await self.client.start()
+        except FloodWaitError as e:
+            log.error("Telegram FloodWait during start: %d seconds required.", e.seconds)
+            raise e
         me = await self.client.get_me()
         log.info("Authenticated as %s (ID %s)", me.first_name, me.id)
         self._running = True
@@ -97,6 +104,7 @@ class SyncEngine:
             if self._running:
                 log.debug("Next sync in %d s ...", self.cfg.sync_interval)
                 await asyncio.sleep(self.cfg.sync_interval)
+
 
     # ------------------------------------------------------------------
     #  Core sync
@@ -204,6 +212,12 @@ class SyncEngine:
     async def _upload_file(self, full_path: Path, rel_path: str) -> None:
         """Upload a single file with retries."""
         size = full_path.stat().st_size
+        if size > 2000 * 1024 * 1024:
+            log.warning("Skipping %s: File larger than 2GB limit.", rel_path)
+            if hasattr(self, "on_large_file") and self.on_large_file:
+                self.on_large_file(rel_path)
+            return
+            
         h = file_hash(full_path, self.cfg.hash_algorithm)
 
         for attempt in range(1, self.cfg.max_retries + 1):
@@ -283,21 +297,6 @@ class SyncEngine:
 
             # Already exists locally with same size?  Skip.
             if local_dest.exists():
-                remote_size = _media_size(msg)
-                if remote_size and local_dest.stat().st_size == remote_size:
-                    # Track it but don't download again
-                    h = file_hash(local_dest, self.cfg.hash_algorithm)
-                    self.db.upsert(rel_path, {
-                        "filename": local_dest.name,
-                        "size": remote_size,
-                        "hash": h,
-                        "message_id": msg.id,
-                        "last_synced": _now_iso(),
-                        "deleted": False,
-                    })
-                    continue
-
-            if getattr(self.cfg, "on_demand_sync", False):
                 # Create a placeholder file instead of full download
                 remote_size = _media_size(msg)
                 await create_lnk_stub(self.client, msg, self.local, rel_path)
@@ -494,6 +493,8 @@ def _extract_rel_path(msg: Message) -> str | None:
     text = (msg.message or "").strip()
     if text.startswith(_TDRIVE_TAG):
         candidate = text[len(_TDRIVE_TAG):].strip()
+        if " part " in candidate and "/" in candidate:
+            candidate = candidate.split(" part ")[0].strip()
         if candidate:
             return candidate
 
@@ -526,7 +527,20 @@ def _media_size(msg: Message) -> int | None:
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
-async def create_lnk_stub(client, msg, local_dir: Path, rel_path: str) -> None:
+def _extract_multipart_info(msg: Message) -> tuple[int | None, int | None]:
+    caption = msg.message or ""
+    if " part " in caption and "/" in caption:
+        try:
+            parts = caption.split(" part ")
+            info = parts[-1].split("/")
+            curr = int(info[0])
+            total = int(info[1])
+            return curr, total
+        except:
+            pass
+    return None, None
+
+async def create_lnk_stub(client, msg, local_dir: Path, rel_path: str, multi_ids: list[int] | None = None) -> None:
     """Create a native Windows Shortcut as a stub, with optional thumbnail."""
     stub_dest = local_dir / (rel_path + ".lnk")
     stub_dest.parent.mkdir(parents=True, exist_ok=True)
@@ -562,8 +576,10 @@ async def create_lnk_stub(client, msg, local_dir: Path, rel_path: str) -> None:
         log.debug("No thumb for msg %s: %s", msg.id, e)
 
     import sys, os, subprocess, tempfile
+    is_frozen = getattr(sys, 'frozen', False)
     python_exe = sys.executable
-    if "python.exe" in python_exe.lower():
+    
+    if not is_frozen and "python.exe" in python_exe.lower():
         try_pw = python_exe.lower().replace("python.exe", "pythonw.exe")
         if os.path.exists(try_pw): python_exe = try_pw
         
@@ -572,13 +588,21 @@ async def create_lnk_stub(client, msg, local_dir: Path, rel_path: str) -> None:
     # Escape for VBScript
     script_escaped = script_path.replace('"', '""')
     rel_escaped = rel_path.replace('"', '""')
-    arg_line = f'Chr(34) & "{script_escaped}" & Chr(34) & " hydrate " & Chr(34) & "{rel_escaped}" & Chr(34) & " {msg.id}"'
     
+    ids_str = ",".join(map(str, multi_ids)) if multi_ids else str(msg.id)
+    payload = f"{rel_path}|{ids_str}".replace('"', '`"')
+    
+    # PowerShell command to send a message to the running T-Drive instance socket (Port 50321)
+    # This bypasses the need to launch T-Drive.exe and avoids UAC prompts!
+    ps_cmd = f'-WindowStyle Hidden -Command "$c = New-Object System.Net.Sockets.TcpClient; $c.Connect(\'127.0.0.1\', 50321); $s = $c.GetStream(); $w = New-Object System.IO.StreamWriter($s); $w.Write(\'{payload}\'); $w.Flush(); $c.Close();"'
+
+    ps_cmd_vbs = ps_cmd.replace('"', '""')
+
     vbs = f"""
 Set oWS = WScript.CreateObject("WScript.Shell")
 Set oLink = oWS.CreateShortcut("{stub_dest}")
-oLink.TargetPath = "{python_exe}"
-oLink.Arguments = {arg_line}
+oLink.TargetPath = "powershell.exe"
+oLink.Arguments = "{ps_cmd_vbs}"
 """
     if icon_path:
         vbs += f'oLink.IconLocation = "{icon_path}, 0"\n'

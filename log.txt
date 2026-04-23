@@ -1,0 +1,4 @@
+[2026-04-22 21:19:48] INFO      Registered .tdrive file association.
+[2026-04-22 21:19:51] INFO      Update Check: Local=1.1.2, Remote=1.1.2
+[2026-04-22 21:21:54] INFO      Registered .tdrive file association.
+[2026-04-22 21:21:57] INFO      Update Check: Local=1.1.2, Remote=1.1.2

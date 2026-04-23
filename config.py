@@ -12,14 +12,37 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
+from logger import get_logger
+
+log = get_logger()
+
+import os
 
 if getattr(sys, "frozen", False):
-    # If the app is bundled (PyInstaller), use the directory of the executable
+    # Check for portable mode first (config.json next to EXE)
     _EXE_DIR = Path(sys.executable).parent
-    _CONFIG_PATH = _EXE_DIR / "config.json"
+    _PORTABLE_CONFIG = _EXE_DIR / "config.json"
+    
+    # If the EXE is in a protected folder (like Program Files), we MUST use AppData
+    # unless we are running as Admin. A good heuristic is to check if we can write to _EXE_DIR.
+    try:
+        _test_file = _EXE_DIR / ".write_test"
+        _test_file.touch()
+        _test_file.unlink()
+        _CAN_WRITE_EXE = True
+    except:
+        _CAN_WRITE_EXE = False
+
+    if _PORTABLE_CONFIG.exists() and _CAN_WRITE_EXE:
+        DATA_DIR = _EXE_DIR
+        _CONFIG_PATH = _PORTABLE_CONFIG
+    else:
+        DATA_DIR = Path(os.environ.get("APPDATA", str(Path.home()))) / "T-Drive"
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        _CONFIG_PATH = DATA_DIR / "config.json"
 else:
-    # If running from source, use the directory of this script
-    _CONFIG_PATH = Path(__file__).parent / "config.json"
+    DATA_DIR = Path(__file__).parent
+    _CONFIG_PATH = DATA_DIR / "config.json"
 
 
 
@@ -33,23 +56,38 @@ class AppConfig:
 
     api_id: int
     api_hash: str
-    local_folder: str
-    sync_interval: int = 60
-    drive_letter: str = "G"
-    log_file: str = "log.txt"
-    db_file: str = "sync_db.json"
-    session_name: str = "telegram_drive_session"
+    local_folder: str = str(Path.home() / "T-Drive")
+    sync_interval: int = 10
+    drive_letter: str = "T"
+    log_file: str = str(DATA_DIR / "log.txt")
+    db_file: str = str(DATA_DIR / "sync_db.json")
+    session_name: str = str(DATA_DIR / "telegram_drive_session")
     hash_algorithm: Literal["md5", "sha256"] = "md5"
     delete_sync: bool = True
-    on_demand_sync: bool = False
-    max_retries: int = 5
-    retry_delay: int = 10
+    on_demand_sync: bool = True
+    max_retries: int = 999999
+    retry_delay: int = 3
+    autostart: bool = True
 
     def __post_init__(self) -> None:
         # Normalise paths
         self.local_folder = str(Path(self.local_folder).resolve())
+
+        # Ensure data files are in DATA_DIR if they are relative paths
+        for attr in ["log_file", "db_file", "session_name"]:
+            val = getattr(self, attr)
+            if val and not os.path.isabs(val):
+                setattr(self, attr, str(DATA_DIR / os.path.basename(val)))
         # Ensure the local folder exists
-        Path(self.local_folder).mkdir(parents=True, exist_ok=True)
+        try:
+            Path(self.local_folder).mkdir(parents=True, exist_ok=True)
+            # Test write access
+            test_file = Path(self.local_folder) / ".td_test"
+            test_file.touch()
+            test_file.unlink()
+        except (PermissionError, OSError) as e:
+            log.error("CRITICAL: No write access to sync folder %s: %s", self.local_folder, e)
+            log.error("Please run T-Drive as Administrator or choose a different folder.")
 
     def to_dict(self) -> dict:
         """Serialise config to a plain dict for JSON storage."""
@@ -67,6 +105,7 @@ class AppConfig:
             "on_demand_sync": self.on_demand_sync,
             "max_retries": self.max_retries,
             "retry_delay": self.retry_delay,
+            "autostart": self.autostart,
         }
 
 

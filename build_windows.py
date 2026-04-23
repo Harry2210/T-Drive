@@ -24,8 +24,9 @@ def build():
         "--noconsole",
         "--onefile",
         "--icon=app.ico",
-        f"--add-data={ctk_path}{os.pathsep}customtkinter",
+        "--add-data=" + f"{ctk_path}{os.pathsep}customtkinter",
         "--name=T-Drive",
+        "--uac-admin",
         "main.py"
     ]
     

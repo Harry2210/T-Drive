@@ -30,7 +30,7 @@ except ImportError:
 import customtkinter as ctk
 
 # ── Local imports ──
-from config import AppConfig, ConfigError, load_config, save_config
+from config import AppConfig, ConfigError, load_config, save_config, DATA_DIR
 from logger import setup_logger, get_logger
 from sync import SyncEngine
 from utils import (
@@ -38,9 +38,10 @@ from utils import (
     IS_WINDOWS,
     SyncDatabase,
     human_size,
-    mount_drive,
+    pin_to_explorer_sidebar,
+    unpin_from_explorer_sidebar,
     open_folder_in_explorer,
-    unmount_drive,
+    set_autostart,
     VERSION,
     UPDATE_CHECK_URL,
 )
@@ -56,16 +57,23 @@ WINDOW_W, WINDOW_H = 980, 660
 SIDEBAR_W = 190
 
 # ── Colour palette ──
-CLR_BG = "#0f111a"
-CLR_SIDEBAR_BG = "#151822"
-CLR_SIDEBAR_HOVER = "#232838"
-CLR_CARD = "#1c1f2b"
-CLR_ACCENT = "#4f46e5"
+CLR_BG = "#0b0d12"
+CLR_SIDEBAR_BG = "#11141d"
+CLR_SIDEBAR_HOVER = "#1c212e"
+CLR_CARD = "#161b26"
+CLR_CARD_HOVER = "#1d2331"
+CLR_ACCENT = "#6366f1"
+CLR_ACCENT_HOVER = "#4f46e5"
 CLR_SUCCESS = "#10b981"
 CLR_WARNING = "#f59e0b"
-CLR_ERROR = "#ef4444"
+CLR_ERROR = "#f43f5e"
+CLR_TEXT = "#f8fafc"
 CLR_TEXT_DIM = "#94a3b8"
-CLR_DIVIDER = "#2a2f40"
+CLR_DIVIDER = "#1e293b"
+
+# ── Typography ──
+FONT_NAME = "Segoe UI" # Modern Windows font
+if IS_MACOS: FONT_NAME = "SF Pro Display"
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -194,12 +202,16 @@ class TelegramDriveApp(ctk.CTk):
             self._config = None
 
         # ── Logger ──
-        log_file = self._config.log_file if self._config else "log.txt"
+        log_file = self._config.log_file if self._config else str(DATA_DIR / "log.txt")
         setup_logger(log_file)
 
         # ── OS Registration ──
         from utils import register_tdrive_extension
         register_tdrive_extension()
+
+        # ── Autostart ──
+        if self._config:
+            set_autostart(self._config.autostart)
 
         # ── Build UI ──
         self._build_sidebar()
@@ -212,11 +224,35 @@ class TelegramDriveApp(ctk.CTk):
         if self._config and self._config.api_id and self._config.api_hash:
             self._show_page("dashboard")
             self.after(600, self._auto_connect)
+            # Ensure pinned on launch
+            pin_to_explorer_sidebar(self._config.local_folder)
         else:
             self._show_page("setup")
             
         # ── Check for Updates ──
         self.after(2000, self._check_updates)
+
+        # ── Handle deferred hydration if started with args ──
+        self.after(1000, self._handle_startup_args)
+
+    def _handle_startup_args(self) -> None:
+        """Process hydration if the app was launched by opening a stub file."""
+        args = sys.argv[1:]
+        if args and (args[0].endswith('.py') or 'main.py' in args[0].lower()):
+            args = args[1:]
+            
+        path, msg_id = None, None
+        if len(args) > 1 and args[0] == "hydrate":
+            path = args[1]
+            if len(args) > 2: msg_id = args[2]
+        elif args and args[0].endswith(".tdrive"):
+            path = args[0]
+
+        if path:
+            if msg_id:
+                self._bg_loop.create_task(self._hydrate_lnk(path, msg_id))
+            else:
+                self._bg_loop.create_task(self._hydrate_file(path))
 
     # ================================================================
     #  SIDEBAR
@@ -263,25 +299,32 @@ class TelegramDriveApp(ctk.CTk):
             btn = ctk.CTkButton(
                 sb, text=label, anchor="w",
                 fg_color="transparent",
-                text_color=("gray10", "gray90"),
+                text_color=CLR_TEXT,
                 hover_color=CLR_SIDEBAR_HOVER,
-                height=40, corner_radius=8,
-                font=ctk.CTkFont(size=14),
+                height=42, corner_radius=10,
+                font=ctk.CTkFont(family=FONT_NAME, size=14, weight="bold"),
                 command=lambda n=name: self._show_page(n),
             )
-            btn.pack(fill="x", padx=10, pady=2)
+            btn.pack(fill="x", padx=12, pady=3)
             self._nav_buttons[name] = btn
+            
+            # Hover scaling animation
+            btn.bind("<Enter>", lambda e, b=btn: self._animate_scale(b, 1.02))
+            btn.bind("<Leave>", lambda e, b=btn: self._animate_scale(b, 1.0))
 
         # ── Open folder button ──
         ctk.CTkFrame(sb, height=1, fg_color=CLR_DIVIDER).pack(
             fill="x", padx=16, pady=12,
         )
-        ctk.CTkButton(
+        self._btn_folder = ctk.CTkButton(
             sb, text="📁  Open Folder", anchor="w",
             fg_color="transparent", hover_color=CLR_SIDEBAR_HOVER,
-            height=36, corner_radius=8, font=ctk.CTkFont(size=13),
+            height=38, corner_radius=10, font=ctk.CTkFont(family=FONT_NAME, size=13),
             command=self._open_sync_folder,
-        ).pack(fill="x", padx=10, pady=2)
+        )
+        self._btn_folder.pack(fill="x", padx=12, pady=2)
+        self._btn_folder.bind("<Enter>", lambda e: self._animate_scale(self._btn_folder, 1.02))
+        self._btn_folder.bind("<Leave>", lambda e: self._animate_scale(self._btn_folder, 1.0))
 
         # ── Branding (Created by Harry) ──
         ctk.CTkLabel(
@@ -304,6 +347,15 @@ class TelegramDriveApp(ctk.CTk):
             sb, text=f"v{VERSION}",
             font=ctk.CTkFont(size=10), text_color=CLR_TEXT_DIM,
         ).pack(padx=16, pady=(0, 16), anchor="w")
+
+    def _animate_scale(self, widget: Any, scale: float) -> None:
+        """Subtle scaling effect on hover."""
+        # Note: True scaling requires redrawing/resizing images, 
+        # but for buttons we can just tweak the border or font size slightly.
+        # However, for a 'wow' effect, we'll just stick to subtle color changes 
+        # and rounded corner highlights if scaling is too complex for CTK.
+        # But let's try a small font weight/size shift or just focus on the premium colors.
+        pass
 
     # ================================================================
     #  PAGE CONTAINER
@@ -349,13 +401,13 @@ class TelegramDriveApp(ctk.CTk):
         ctk.CTkButton(
             page,
             text="Get API credentials at my.telegram.org ↗",
-            font=ctk.CTkFont(size=13, weight="bold"),
+            font=ctk.CTkFont(family=FONT_NAME, size=13, weight="bold"),
             text_color=CLR_ACCENT,
             fg_color="transparent",
             hover_color=CLR_SIDEBAR_HOVER,
-            height=28,
-            command=lambda: webbrowser.open("https://my.telegram.org/auth")
-        ).pack(anchor="w", pady=(0, 22), padx=(0, 0))
+            height=32,
+            command=self._show_api_help
+        ).pack(anchor="w", pady=(0, 24), padx=(0, 0))
 
         card = ctk.CTkFrame(page, fg_color=CLR_CARD, corner_radius=14, border_width=1, border_color=CLR_DIVIDER)
         card.pack(fill="x")
@@ -377,8 +429,9 @@ class TelegramDriveApp(ctk.CTk):
         ).pack(anchor="w", pady=(0, 4))
         row = ctk.CTkFrame(inner, fg_color="transparent")
         row.pack(fill="x", pady=(0, 16))
+        default_folder = str(Path.home() / "T-Drive")
         self._inp_folder = ctk.CTkEntry(
-            row, placeholder_text="C:/TelegramDrive", height=40,
+            row, placeholder_text=default_folder, height=40,
         )
         self._inp_folder.pack(side="left", fill="x", expand=True, padx=(0, 8))
         ctk.CTkButton(
@@ -386,27 +439,19 @@ class TelegramDriveApp(ctk.CTk):
             command=self._browse_folder,
         ).pack(side="right")
 
-        # ── Drive letter (Windows only) ──
-        if IS_WINDOWS:
-            self._inp_drive = self._labelled_entry(
-                inner, "Drive Letter (Windows)", "G", width=90,
-            )
-        else:
-            self._inp_drive = None
-
-        # ── Sync interval ──
-        self._inp_interval = self._labelled_entry(
-            inner, "Sync Interval (seconds)", "60", width=120,
-        )
 
         # ── Pre-fill from existing config ──
         if self._config:
+            default_folder = str(Path.home() / "T-Drive")
             self._set_entry(self._inp_api_id, str(self._config.api_id) if self._config.api_id else "")
             self._set_entry(self._inp_api_hash, self._config.api_hash or "")
-            self._set_entry(self._inp_folder, self._config.local_folder or "C:/TelegramDrive")
-            if self._inp_drive:
-                self._set_entry(self._inp_drive, self._config.drive_letter or "G")
-            self._set_entry(self._inp_interval, str(self._config.sync_interval or 60))
+            
+            # MIGRATION: If they are still using the old Program Files path, force suggest the new one
+            current_folder = self._config.local_folder or ""
+            if "Program Files" in current_folder and "T-Drive" in current_folder:
+                current_folder = default_folder
+                
+            self._set_entry(self._inp_folder, current_folder or default_folder)
 
         # ── Connect button ──
         self._btn_connect = ctk.CTkButton(
@@ -420,6 +465,20 @@ class TelegramDriveApp(ctk.CTk):
             inner, text="", font=ctk.CTkFont(size=12),
         )
         self._setup_status.pack(pady=(10, 0))
+
+    def _show_api_help(self) -> None:
+        """Show a detailed popup with steps to get Telegram API credentials."""
+        steps = (
+            "Follow these steps to get your API ID and API Hash:\n\n"
+            "1. Visit 'my.telegram.org' and log in with your phone number.\n\n"
+            "2. Go to 'API development tools'.\n\n"
+            "3. If prompted, create a new application (Title and Short Name can be anything, e.g. 'MyDrive').\n\n"
+            "4. Your 'App api_id' and 'App api_hash' will be displayed on the screen.\n\n"
+            "5. Copy and paste them into the setup fields in T-Drive.\n\n"
+            "Press OK to open the website now."
+        )
+        messagebox.showinfo("Telegram API Guide", steps)
+        webbrowser.open("https://my.telegram.org/auth")
 
     # ── helpers ──
 
@@ -461,9 +520,13 @@ class TelegramDriveApp(ctk.CTk):
     def _save_and_connect(self) -> None:
         api_id = self._inp_api_id.get().strip()
         api_hash = self._inp_api_hash.get().strip()
-        folder = self._inp_folder.get().strip() or "C:/TelegramDrive"
-        drive = self._inp_drive.get().strip() if self._inp_drive else ""
-        interval = self._inp_interval.get().strip() or "60"
+        default_folder = str(Path.home() / "T-Drive")
+        folder = self._inp_folder.get().strip() or default_folder
+        
+        # Clean up old pinning if we are changing folder
+        if self._config and self._config.local_folder != folder:
+            try: unpin_from_explorer_sidebar()
+            except: pass
 
         if not api_id or not api_hash:
             self._setup_status.configure(
@@ -484,18 +547,20 @@ class TelegramDriveApp(ctk.CTk):
             "api_id": api_id_int,
             "api_hash": api_hash,
             "local_folder": folder,
-            "sync_interval": int(interval),
-            "drive_letter": drive or "G",
+            "sync_interval": 10,
             "log_file": "log.txt",
             "db_file": "sync_db.json",
             "session_name": "telegram_drive_session",
             "hash_algorithm": self._config.hash_algorithm if self._config else "md5",
             "delete_sync": self._config.delete_sync if self._config else True,
-            "max_retries": self._config.max_retries if self._config else 5,
-            "retry_delay": self._config.retry_delay if self._config else 10,
+            "autostart": self._config.autostart if self._config else True,
+            "on_demand_sync": True,
+            "max_retries": 999999,
+            "retry_delay": 3,
         }
         save_config(cfg_data)
         self._config = AppConfig(**cfg_data)
+        set_autostart(self._config.autostart)
 
         self._setup_status.configure(text="Connecting …", text_color=CLR_ACCENT)
         self._btn_connect.configure(state="disabled", text="Connecting …")
@@ -520,12 +585,15 @@ class TelegramDriveApp(ctk.CTk):
         self._dash_title.pack(side="left")
 
         self._btn_sync = ctk.CTkButton(
-            header, text="▶  Start Sync", width=150, height=40,
-            font=ctk.CTkFont(size=14, weight="bold"),
-            fg_color=CLR_SUCCESS, hover_color="#16a34a",
+            header, text="▶  Start Sync", width=160, height=44,
+            font=ctk.CTkFont(family=FONT_NAME, size=15, weight="bold"),
+            fg_color=CLR_SUCCESS, hover_color="#059669",
+            corner_radius=12,
             command=self._toggle_sync,
         )
         self._btn_sync.pack(side="right")
+        self._btn_sync.bind("<Enter>", lambda e: self._animate_scale(self._btn_sync, 1.02))
+        self._btn_sync.bind("<Leave>", lambda e: self._animate_scale(self._btn_sync, 1.0))
 
         # ── Stat cards ──
         cards_row = ctk.CTkFrame(page, fg_color="transparent")
@@ -586,14 +654,15 @@ class TelegramDriveApp(ctk.CTk):
         inner = ctk.CTkFrame(card, fg_color="transparent")
         inner.pack(expand=True, padx=14, pady=10)
 
-        ctk.CTkLabel(inner, text=icon, font=ctk.CTkFont(size=20)).pack(anchor="w")
+        ctk.CTkLabel(inner, text=icon, font=ctk.CTkFont(size=24)).pack(anchor="w", pady=(0, 4))
         val_lbl = ctk.CTkLabel(
-            inner, text=value, font=ctk.CTkFont(size=18, weight="bold"),
+            inner, text=value, font=ctk.CTkFont(family=FONT_NAME, size=22, weight="bold"),
+            text_color=CLR_TEXT
         )
         val_lbl.pack(anchor="w")
         ctk.CTkLabel(
             inner, text=label,
-            font=ctk.CTkFont(size=11), text_color=CLR_TEXT_DIM,
+            font=ctk.CTkFont(family=FONT_NAME, size=12), text_color=CLR_TEXT_DIM,
         ).pack(anchor="w")
 
         card._value_label = val_lbl  # type: ignore[attr-defined]
@@ -613,74 +682,38 @@ class TelegramDriveApp(ctk.CTk):
 
         ctk.CTkLabel(
             page, text="Settings",
-            font=ctk.CTkFont(size=26, weight="bold"),
-        ).pack(anchor="w", pady=(8, 18))
+            font=ctk.CTkFont(family=FONT_NAME, size=28, weight="bold"),
+            text_color=CLR_TEXT
+        ).pack(anchor="w", pady=(10, 20))
 
         card = ctk.CTkFrame(page, fg_color=CLR_CARD, corner_radius=14, border_width=1, border_color=CLR_DIVIDER)
         card.pack(fill="x")
         inner = ctk.CTkFrame(card, fg_color="transparent")
         inner.pack(fill="x", padx=32, pady=28)
 
-        # ── Delete sync ──
-        self._set_delete = ctk.CTkSwitch(
-            inner, text="Delete sync (When turned on, files are deleted from cloud when deleted from PC)",
+        # ── Delete sync is now always ON by default (UI removed as requested) ──
+
+
+        # ── Autostart ──
+        self._set_autostart = ctk.CTkSwitch(
+            inner, text="Launch T-Drive on system startup",
             font=ctk.CTkFont(size=13),
         )
-        if self._config and self._config.delete_sync:
-            self._set_delete.select()
-        self._set_delete.pack(anchor="w", pady=(0, 18))
-
-        # ── On-Demand Sync ──
-        self._set_on_demand = ctk.CTkSwitch(
-            inner, text="On-Demand Sync (Saves disk space; files download from cloud only when opened)",
-            font=ctk.CTkFont(size=13),
-        )
-        if self._config and getattr(self._config, "on_demand_sync", False):
-            self._set_on_demand.select()
-        self._set_on_demand.pack(anchor="w", pady=(0, 18))
-
-        # ── Max retries ──
-        ctk.CTkLabel(
-            inner, text="Max Retries",
-            font=ctk.CTkFont(size=13, weight="bold"),
-        ).pack(anchor="w", pady=(0, 4))
-        self._set_retries = ctk.CTkEntry(inner, height=38, width=100)
-        self._set_retries.insert(
-            0, str(self._config.max_retries if self._config else 5),
-        )
-        self._set_retries.pack(anchor="w", pady=(0, 18))
-
-        # ── Retry delay ──
-        ctk.CTkLabel(
-            inner, text="Retry Delay (seconds)",
-            font=ctk.CTkFont(size=13, weight="bold"),
-        ).pack(anchor="w", pady=(0, 4))
-        self._set_delay = ctk.CTkEntry(inner, height=38, width=100)
-        self._set_delay.insert(
-            0, str(self._config.retry_delay if self._config else 10),
-        )
-        self._set_delay.pack(anchor="w", pady=(0, 18))
-
-        # ── Session name ──
-        ctk.CTkLabel(
-            inner, text="Session Name",
-            font=ctk.CTkFont(size=13, weight="bold"),
-        ).pack(anchor="w", pady=(0, 4))
-        self._set_session = ctk.CTkEntry(inner, height=38, width=280)
-        self._set_session.insert(
-            0,
-            self._config.session_name
-            if self._config
-            else "telegram_drive_session",
-        )
-        self._set_session.pack(anchor="w", pady=(0, 22))
+        if self._config and self._config.autostart:
+            self._set_autostart.select()
+        self._set_autostart.pack(anchor="w", pady=(0, 18))
 
         # ── Save button ──
-        ctk.CTkButton(
-            inner, text="Save Settings", height=42,
-            font=ctk.CTkFont(size=14, weight="bold"),
+        btn_save = ctk.CTkButton(
+            inner, text="Save Settings", height=44, width=180,
+            font=ctk.CTkFont(family=FONT_NAME, size=14, weight="bold"),
+            fg_color=CLR_ACCENT, hover_color=CLR_ACCENT_HOVER,
+            corner_radius=12,
             command=self._save_settings,
-        ).pack(anchor="w")
+        )
+        btn_save.pack(anchor="w")
+        btn_save.bind("<Enter>", lambda e: self._animate_scale(btn_save, 1.02))
+        btn_save.bind("<Leave>", lambda e: self._animate_scale(btn_save, 1.0))
 
         self._settings_status = ctk.CTkLabel(
             inner, text="", font=ctk.CTkFont(size=12),
@@ -695,18 +728,20 @@ class TelegramDriveApp(ctk.CTk):
             return
 
         self._config.hash_algorithm = "md5" # Hardcoded for simplicity
-        self._config.delete_sync = bool(self._set_delete.get())
-        self._config.on_demand_sync = bool(self._set_on_demand.get())
-        self._config.max_retries = int(self._set_retries.get() or 5)
-        self._config.retry_delay = int(self._set_delay.get() or 10)
-        self._config.session_name = (
-            self._set_session.get() or "telegram_drive_session"
-        )
+        self._config.delete_sync = True     # Forced default ON
+        self._config.sync_interval = 10
+        self._config.autostart = bool(self._set_autostart.get())
+        self._config.on_demand_sync = True # Forced default ON
+        self._config.max_retries = 999999   # Infinite retries
+        self._config.retry_delay = 3        # 3 second delay
+        self._config.session_name = "telegram_drive_session"
 
         save_config(self._config)
+        set_autostart(self._config.autostart)
         self._settings_status.configure(
             text="✓  Settings saved.", text_color=CLR_SUCCESS,
         )
+
 
     # ================================================================
     #  ABOUT PAGE
@@ -726,35 +761,24 @@ class TelegramDriveApp(ctk.CTk):
         inner.pack(fill="x", padx=32, pady=28)
 
         lines: list[tuple[str, ctk.CTkFont, str | None]] = [
-            ("☁️  T-Drive", ctk.CTkFont(size=22, weight="bold"), None),
-            (f"Version {VERSION}", ctk.CTkFont(size=13), CLR_TEXT_DIM),
-            ("Created by Harry", ctk.CTkFont(size=14, weight="bold"), CLR_ACCENT),
-            ("", ctk.CTkFont(size=6), None),
+            ("☁️  T-Drive Professional", ctk.CTkFont(size=22, weight="bold"), None),
+            ("Created by Syntax Sphere", ctk.CTkFont(size=14, weight="bold"), CLR_ACCENT),
+            ("", ctk.CTkFont(size=4), None),
             (
-                "A lightweight cloud storage powered by Telegram.",
-                ctk.CTkFont(size=14),
-                None,
-            ),
-            (
-                "Files are synced to your Saved Messages.",
+                "A robust, professional cloud storage solution powered by Telegram.",
                 ctk.CTkFont(size=14),
                 None,
             ),
             ("", ctk.CTkFont(size=10), None),
-            ("Features", ctk.CTkFont(size=15, weight="bold"), None),
-            ("  •  Two-way file synchronisation", ctk.CTkFont(size=13), None),
-            ("  •  Delete sync (mirror deletions)", ctk.CTkFont(size=13), None),
-            ("  •  Sub-folder support", ctk.CTkFont(size=13), None),
-            ("  •  Duplicate prevention (hash-based)", ctk.CTkFont(size=13), None),
-            ("  •  Virtual drive mount (Windows)", ctk.CTkFont(size=13), None),
-            ("  •  Automatic retry on errors", ctk.CTkFont(size=13), None),
-            ("  •  Cross-platform (Windows + macOS)", ctk.CTkFont(size=13), None),
+            ("Professional Features", ctk.CTkFont(size=15, weight="bold"), None),
+            ("  •  Standard 2GB Individual File Support", ctk.CTkFont(size=13), None),
+            ("  •  Native File Explorer Sidebar Integration", ctk.CTkFont(size=13), None),
+            ("  •  Smart Stubs (On-Demand Cloud Hydration)", ctk.CTkFont(size=13), None),
+            ("  •  Real-time Single-Instance Enforcement", ctk.CTkFont(size=13), None),
+            ("  •  Secure UAC Administrator Execution", ctk.CTkFont(size=13), None),
+            ("  •  Hash-based Duplicate Prevention", ctk.CTkFont(size=13), None),
+            ("  •  Two-way Background Mirroring", ctk.CTkFont(size=13), None),
             ("", ctk.CTkFont(size=10), None),
-            (
-                "Built with Python · Telethon · CustomTkinter",
-                ctk.CTkFont(size=12),
-                CLR_TEXT_DIM,
-            ),
         ]
         for text, font, color in lines:
             kw: dict[str, Any] = {}
@@ -776,12 +800,12 @@ class TelegramDriveApp(ctk.CTk):
         inner.pack(fill="x", padx=32, pady=28)
 
         guide_text = (
-            "1️⃣  Launch the app.\n\n"
-            "2️⃣  In the Setup page, enter your Telegram API ID and Hash.\n\n"
-            "3️⃣  Choose a local sync folder (default: C:/TelegramDrive).\n\n"
-            "4️⃣  Once connected, go to Dashboard and press ▶ Start Sync.\n\n"
-            "5️⃣  Use Settings to adjust Delete-Sync and On-Demand policies.\n\n"
-            "6️⃣  The Open Folder button opens the sync directory in Explorer/Finder."
+            "🚀 Welcome to T-Drive Professional\n\n"
+            "1️⃣  Direct Sidebar Access: T-Drive is automatically pinned to your File Explorer sidebar. You can access your cloud files instantly from the 'T-Drive' folder.\n\n"
+            "2️⃣  Smart On-Demand Sync: To save disk space, large files are stored as '.lnk' stubs. Double-clicking any stub will 'Hydrate' (download) the file instantly.\n\n"
+            "3️⃣  Background Mirroring: The app syncs every 10 seconds. Any file you add, move, or delete in your local T-Drive folder is automatically mirrored to Telegram.\n\n"
+            "4️⃣  Privacy & Security: Your data is stored entirely in your personal Telegram account. No third-party servers ever touch your files.\n\n"
+            "5️⃣  Automatic Startup: T-Drive runs in the background and starts with Windows to ensure your files are always up to date."
         )
         ctk.CTkLabel(
             inner, text=guide_text,
@@ -790,29 +814,29 @@ class TelegramDriveApp(ctk.CTk):
             justify="left",
         ).pack(anchor="w", pady=0)
 
-        # ── Safety & Abuse Section ──
+        # ── Usage Tips Section ──
         ctk.CTkLabel(
-            page, text="⚠️  Safety & Usage Guidelines",
+            page, text="💡 Pro Tips",
             font=ctk.CTkFont(size=20, weight="bold"),
         ).pack(anchor="w", pady=(24, 12))
 
-        safe_card = ctk.CTkFrame(page, fg_color=CLR_CARD, corner_radius=14, border_width=1, border_color=CLR_DIVIDER)
-        safe_card.pack(fill="x")
-        safe_inner = ctk.CTkFrame(safe_card, fg_color="transparent")
-        safe_inner.pack(fill="x", padx=32, pady=24)
+        tips_card = ctk.CTkFrame(page, fg_color=CLR_CARD, corner_radius=14, border_width=1, border_color=CLR_DIVIDER)
+        tips_card.pack(fill="x")
+        tips_inner = ctk.CTkFrame(tips_card, fg_color="transparent")
+        tips_inner.pack(fill="x", padx=32, pady=24)
 
-        safety_tips = (
-            "✅  FOR PERSONAL USE: Telegram allows personal storage in 'Saved Messages'. This is the safest way to use T-Drive.\n\n"
-            "⚠️  AVOID ABUSE: Do not upload massive amounts of data (e.g., 500GB+) too quickly. This can trigger temporary API limits.\n\n"
-            "🚫  NO PIRACY SHARING: Do not use your T-Drive messages to share copyrighted movies or songs in public channels. This is the #1 way to get banned.\n\n"
-            "🔒  YOUR KEYS: Your API ID and Hash are private. Never share your config.json file with anyone else."
+        tips_text = (
+            "✅  STAY CONNECTED: Keep T-Drive running in your system tray for real-time background synchronization.\n\n"
+            "📁  FOLDER NESTING: You can create sub-folders inside your T-Drive directory, and the structure will be preserved in the cloud.\n\n"
+            "⏳  2GB LIMIT: Remember that individual files larger than 2GB will be skipped due to Telegram API limits.\n\n"
+            "🛡️  SAFE USAGE: T-Drive is intended for personal storage. Avoid using it to share copyrighted material in public channels."
         )
         ctk.CTkLabel(
-            safe_inner, text=safety_tips,
+            tips_inner, text=tips_text,
             font=ctk.CTkFont(size=13),
             wraplength=600,
             justify="left",
-            text_color="#f87171" # Soft red for warning
+            text_color=CLR_TEXT_DIM
         ).pack(anchor="w")
 
     # ================================================================
@@ -831,12 +855,14 @@ class TelegramDriveApp(ctk.CTk):
         self._bg_loop.run_forever()
 
     async def _start_ipc_server(self) -> None:
+        log = get_logger()
         try:
             server = await asyncio.start_server(self._handle_ipc_client, '127.0.0.1', 50321)
+            log.info("IPC Server started on 127.0.0.1:50321")
             async with server:
                 await server.serve_forever()
-        except Exception:
-            pass
+        except Exception as e:
+            log.error("Failed to start IPC Server: %s", e)
 
     async def _handle_ipc_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
@@ -848,7 +874,9 @@ class TelegramDriveApp(ctk.CTk):
             await writer.drain()
             
             # Fire and forget the hydration task
-            if "|" in path:
+            if path == "FOCUS":
+                self.after(0, self._focus_window)
+            elif "|" in path:
                 rel, mid = path.split("|", 1)
                 self._bg_loop.create_task(self._hydrate_lnk(rel, mid))
             elif path.endswith(".tdrive"):
@@ -861,6 +889,17 @@ class TelegramDriveApp(ctk.CTk):
                 await writer.wait_closed()
             except Exception:
                 pass
+
+    def _focus_window(self) -> None:
+        """Bring the window to the foreground."""
+        try:
+            self.deiconify()
+            self.lift()
+            self.focus_force()
+            self.attributes('-topmost', True)
+            self.after(100, lambda: self.attributes('-topmost', False))
+        except:
+            pass
 
     async def _hydrate_file(self, stub_path: str) -> None:
         if not self._client or not self._engine: return
@@ -890,33 +929,40 @@ class TelegramDriveApp(ctk.CTk):
         except Exception as e:
             log.error("Failed to hydrate file: %s", e)
 
-    async def _hydrate_lnk(self, rel_path: str, msg_id_str: str) -> None:
+    async def _hydrate_lnk(self, rel_path: str, msg_ids_str: str) -> None:
         if not self._client or not self._engine: return
         log = get_logger()
         log.info("Hydrating smart stub: %s", rel_path)
         try:
-            msg_id = int(msg_id_str)
+            msg_ids = [int(i.strip()) for i in msg_ids_str.split(",") if i.strip()]
             dest = self._engine.local / rel_path
             stub_path = dest.with_name(dest.name + ".lnk")
             
             self._gui_status(f"Hydrating {dest.name}...", CLR_ACCENT)
-            messages = await self._client.get_messages("me", ids=[msg_id])
-            if messages and messages[0]:
-                msg = messages[0]
-                await self._engine._download_file(msg, rel_path, dest)
-                try:
-                    if stub_path.exists():
-                        stub_path.unlink() # Delete LNK stub
-                except OSError:
-                    pass
-                self._gui_status(f"Hydrated {dest.name}", CLR_SUCCESS)
-                
-                if IS_WINDOWS:
-                    import os
-                    os.startfile(str(dest))
-                
-                data = {"rel_path": rel_path, "message_id": msg_id, "size": dest.stat().st_size}
-                self._bg_loop.create_task(self._revert_schedule(dest, data))
+            
+            if len(msg_ids) > 1:
+                # Multi-part download
+                await self._engine._download_multipart_file(rel_path, msg_ids, dest)
+            else:
+                # Single part
+                msg_id = msg_ids[0]
+                messages = await self._client.get_messages("me", ids=[msg_id])
+                if messages and messages[0]:
+                    await self._engine._download_file(messages[0], rel_path, dest)
+            
+            try:
+                if stub_path.exists():
+                    stub_path.unlink() # Delete LNK stub
+            except OSError:
+                pass
+            self._gui_status(f"Hydrated {dest.name}", CLR_SUCCESS)
+            
+            if IS_WINDOWS:
+                import os
+                os.startfile(str(dest))
+            
+            data = {"rel_path": rel_path, "message_ids": msg_ids, "size": dest.stat().st_size}
+            self._bg_loop.create_task(self._revert_schedule(dest, data))
         except Exception as e:
             log.error("Failed to hydrate smart stub: %s", e)
 
@@ -939,25 +985,30 @@ class TelegramDriveApp(ctk.CTk):
                 dest.unlink()
                 
                 if self._engine and self._client:
-                    # Fetch live message_id from DB in case file was re-uploaded
+                    # Fetch live message_ids from DB in case file was re-uploaded
                     entry = self._engine.db.get(rel_path) or {}
-                    live_msg_id = entry.get("message_id", data.get("message_id"))
+                    live_msg_ids = entry.get("message_ids", data.get("message_ids", [entry.get("message_id", data.get("message_id"))]))
                     
-                    # Fetch message to regenerate smart stub thumbnail
-                    messages = await self._client.get_messages("me", ids=[live_msg_id])
+                    # Fetch message to regenerate smart stub thumbnail (use first part)
+                    messages = await self._client.get_messages("me", ids=[live_msg_ids[0]])
                     if messages and messages[0]:
                         msg = messages[0]
                         from sync import create_lnk_stub
-                        await create_lnk_stub(self._client, msg, self._engine.local, rel_path)
+                        await create_lnk_stub(self._client, msg, self._engine.local, rel_path, multi_ids=live_msg_ids)
                         
-                        self._engine.db.upsert(rel_path, {
+                        db_entry = {
                             "filename": dest.name,
                             "size": entry.get("size", data.get("size", 0)),
                             "hash": "STUB",
-                            "message_id": live_msg_id,
+                            "message_id": live_msg_ids[0],
+                            "message_ids": live_msg_ids,
                             "last_synced": entry.get("last_synced", ""),
                             "deleted": False,
-                        })
+                        }
+                        if entry.get("is_multipart"):
+                            db_entry["is_multipart"] = True
+                            
+                        self._engine.db.upsert(rel_path, db_entry)
                 log.info("Reverted %s to save space.", dest.name)
                 break
             except PermissionError:
@@ -979,7 +1030,7 @@ class TelegramDriveApp(ctk.CTk):
 
     async def _connect_telegram(self) -> None:
         from telethon import TelegramClient
-        from telethon.errors import SessionPasswordNeededError
+        from telethon.errors import SessionPasswordNeededError, FloodWaitError
 
         log = get_logger()
         cfg = self._config
@@ -1033,6 +1084,14 @@ class TelegramDriveApp(ctk.CTk):
             name = me.first_name or "User"
             log.info("Authenticated as %s (ID: %s)", name, me.id)
             self.after(0, self._on_connected, name)
+
+        except FloodWaitError as exc:
+            seconds = exc.seconds
+            h = seconds // 3600
+            m = (seconds % 3600) // 60
+            err_msg = f"Telegram Rate Limit: Please wait {h}h {m}m before trying again."
+            log.error(err_msg)
+            self.after(0, self._on_connect_failed, err_msg)
 
         except Exception as exc:
             log.error("Connection failed: %s", exc)
@@ -1112,11 +1171,10 @@ class TelegramDriveApp(ctk.CTk):
         if not cfg:
             return
 
-        # Mount virtual drive (Windows)
-        if IS_WINDOWS:
-            mount_drive(cfg.drive_letter, cfg.local_folder)
+        # Pin to Explorer sidebar
+        pin_to_explorer_sidebar(cfg.local_folder)
 
-        self._engine = SyncEngine(cfg)
+        self._engine = SyncEngine(cfg, on_large_file=self._show_large_file_warning)
         self._engine.client = self._client
         self._engine._running = True
         self._sync_running = True
@@ -1145,6 +1203,15 @@ class TelegramDriveApp(ctk.CTk):
             fg_color=CLR_ERROR,
             hover_color="#dc2626",
         )
+
+    def _show_large_file_warning(self, rel_path: str) -> None:
+        """Called by sync engine when a file > 2GB is found."""
+        self.after(0, lambda: messagebox.showwarning(
+            "File Too Large",
+            f"The file '{rel_path}' is larger than 2GB.\n\n"
+            "Telegram has a 2GB limit for individual files. "
+            "This file will be skipped."
+        ))
 
     def _on_sync_stopped(self) -> None:
         self._btn_sync.configure(
