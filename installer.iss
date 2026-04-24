@@ -2,7 +2,7 @@
 ; SEE THE DOCUMENTATION FOR DETAILS ON CREATING INNO SETUP SCRIPT FILES!
 
 #define MyAppName "T-Drive"
-#define MyAppVersion "2.3.4"
+#define MyAppVersion "2.4.0"
 #define MyAppPublisher "Syntax Sphere"
 #define MyAppURL "https://github.com/hario/T-Drive"
 #define MyAppExeName "T-Drive.exe"

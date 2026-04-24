@@ -64,7 +64,7 @@ class AppConfig:
     session_name: str = str(DATA_DIR / "telegram_drive_session")
     hash_algorithm: Literal["md5", "sha256"] = "md5"
     delete_sync: bool = True
-    on_demand_sync: bool = True
+    on_demand_sync: bool = False
     max_retries: int = 999999
     retry_delay: int = 3
     autostart: bool = True

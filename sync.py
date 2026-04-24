@@ -24,8 +24,6 @@ from telethon.tl.types import (
 
 from logger import get_logger
 from utils import SyncDatabase, file_hash, human_size, safe_write, sanitise_filename
-from logger import get_logger
-from utils import SyncDatabase, file_hash, human_size, safe_write, sanitise_filename
 
 if TYPE_CHECKING:
     from config import AppConfig
@@ -328,6 +326,10 @@ class SyncEngine:
                 )
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 
+                if not msg.media:
+                    log.error("Message %d has no media! Download impossible.", msg.id)
+                    return
+
                 # Download to hidden AppData temp first
                 import tempfile, shutil
                 appdata = os.environ.get("APPDATA", os.path.expanduser("~"))
@@ -335,14 +337,28 @@ class SyncEngine:
                 hiddentemp_dir.mkdir(parents=True, exist_ok=True)
                 
                 temp_fd, temp_path = tempfile.mkstemp(dir=str(hiddentemp_dir), suffix=".td_tmp")
-                os.close(temp_fd) # Just need the path
+                os.close(temp_fd)
                 
-                await self.client.download_media(msg, file=temp_path)  # type: ignore[union-attr]
- 
-                # Atomic move: Move from secret temp to final destination
-                if dest.exists():
-                    dest.unlink()
-                shutil.move(temp_path, str(dest))
+                last_log_time = 0
+                def progress_callback(received, total):
+                    nonlocal last_log_time
+                    import time
+                    now = time.time()
+                    if now - last_log_time > 2: # Log every 2 seconds
+                        percent = (received / total) * 100 if total else 0
+                        log.info(f"Downloading {rel_path}: {percent:.1f}% ({human_size(received)}/{human_size(total)})")
+                        last_log_time = now
+
+                await self.client.download_media(msg, file=temp_path, progress_callback=progress_callback)
+                
+                # Atomic move
+                if os.path.exists(temp_path):
+                    if dest.exists():
+                        dest.unlink()
+                    shutil.move(temp_path, str(dest))
+                else:
+                    log.error("Download finished but temp file missing for %s", rel_path)
+                    continue
  
                 size = dest.stat().st_size
                 h = file_hash(dest, self.cfg.hash_algorithm)
@@ -390,16 +406,18 @@ class SyncEngine:
             if not p_exist and not t_exist and not l_exist:
                 # Double-check if the file was just moved elsewhere in the drive
                 moved = False
-                for other_rel in self.db.active_entries():
-                    if Path(other_rel).name == Path(rel).name:
-                        moved = True # Likely just a folder move
-                        break
+                for other_rel, other_entry in self.db.active_entries().items():
+                    # Check if another entry exists with the same size AND its file is on disk
+                    if other_rel != rel and other_entry.get("size") == entry.get("size"):
+                        if (self.local / other_rel).exists() or (self.local / (other_rel + ".lnk")).exists():
+                            moved = True
+                            break
                 
                 if not moved:
                     if self._first_run:
                         # OFF-LOAD MODE: The file was gone before we started. 
                         # Restore the stub instead of deleting from Telegram.
-                        log.info("File missing at start -> Offloading to stub: %s", rel)
+                        log.info("File missing at start -> restoring stub: %s", rel)
                         messages = await self.client.get_messages("me", ids=[entry["message_id"]])
                         if messages and messages[0]:
                             await create_lnk_stub(self.client, messages[0], self.local, rel)
@@ -411,7 +429,7 @@ class SyncEngine:
                         self.db.mark_deleted(rel)
                 else:
                     # MOVE DETECTED: Delete the OLD location on Telegram so it doesn't re-download!
-                    log.info("Move detected for %s -> cleanup old Telegram copy", rel)
+                    log.info("Move detected for %s (already at new location) -> cleanup old Telegram copy", rel)
                     await self._delete_telegram_message(entry["message_id"])
                     remove_cached_icon(entry["message_id"])
                     self.db.remove(rel)
